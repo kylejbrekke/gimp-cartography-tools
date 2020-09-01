@@ -18,7 +18,7 @@ License:
     GNU General Public License for more details.
 
     The GNU Public License is available at
-    http://www.gnu.org/copyleft/gpl.html
+    http://www.gnu.org/licenses/gpl-3.0.html
 """
 from gimpfu import *
 import math
@@ -105,7 +105,7 @@ def interpolate(stroke, pixel_spacing, counter, num_strokes):
         path_length = path_length - 0.001
         check = stroke.get_point_at_dist(path_length, 1)[3]
 
-    # add new vertices along the stroke, a new vertex is added every n pixels, where n is the desired pixel density.
+    # add new vertices along the stroke, a new vertex is added every n pixels, where n is the desired pixel density
     pdb.gimp_progress_set_text("Refactoring %d of %d" % (counter + 1, num_strokes))
     while position < path_length:
         x = stroke.get_point_at_dist(position, 1)[0]
@@ -241,7 +241,7 @@ def fractalizePath(image, path, subdivisions, mode, smoothness_coefficient, inte
             stroke = stroke_list[counter]
             pdb.gimp_progress_set_text("Analyzing Segment %d of %d" % (counter + 1, num_strokes))
             if not interpolation:   # do not use interpolation
-                points, closed = stroke.points[0]
+                points, closed = stroke.points
                 num_points = len(points) / 6
             else:   # use interpolation
                 points, num_points = interpolate(stroke, pixel_spacing, counter, num_strokes)
