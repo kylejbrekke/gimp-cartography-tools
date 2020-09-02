@@ -1,7 +1,7 @@
 """
 AUTHOR: Kyle J Brekke
 LAST UPDATED: 26 August 2020
-VERSION: 0.2.0
+VERSION: 0.2.1
 DESCRIPTION: The purpose of this plugin is to provide a seamless method of quickly drafting height-map mountain ranges
 using bezier paths in GIMP. The fractalization code is a translation of Rob Antonishen's fractalize_path script, which
 was originally written in tinyScheme.
@@ -95,7 +95,6 @@ def interpolate(stroke, pixel_spacing, counter, num_strokes):
     # TODO: add curvature option to interpolation function
 
     points = []
-    print(stroke)
     path_length = stroke.get_length(1)
     check = stroke.get_point_at_dist(path_length, 1)[3]
     position = 0
@@ -160,7 +159,6 @@ def fractalize(points, num_points, num_strokes, closed, counter, subdivisions, s
     # subdivide and fractalize the path for every desired level of subdivision
     pdb.gimp_progress_set_text("Fractalizing %d of %d" % (counter + 1, num_strokes))
     while div_counter < subdivisions:
-        print("Performing Subdivision\t%d..." % div_counter)
         point_count = 0
         num_points = len(point_list)
         while point_count < num_points - 1:
@@ -171,7 +169,6 @@ def fractalize(points, num_points, num_strokes, closed, counter, subdivisions, s
                                 num_strokes * subdivisions * num_points))
 
             new_point_list.append(point_list[point_count])
-            print(point_list[point_count])
             new_point_list.append(
                 subdivide(point_list[point_count], point_list[point_count + 1], smoothness_coefficient, mode))
             point_count = point_count + 1
@@ -311,7 +308,7 @@ def getNewID(original, new):
 
 
 def drawMountain(image, path, levels,  starting_color, ending_color, fractalize_layers, subdivisions, mode,
-                 smoothness_coefficient, interpolation, pixel_spacing):
+                 smoothness_coefficient):
     """
     Function which takes in a GIMP Vector object to be converted into a topographic mountain. The general premise of this
     function is that it will take a closed or pseudo-closed path and use it to create several progressively smaller
@@ -343,8 +340,18 @@ def drawMountain(image, path, levels,  starting_color, ending_color, fractalize_
             image.add_layer(layer, 0)
             new_vector = pdb.gimp_vectors_new(image, "layer %d" % (i + 1))
             paths.append("layer %d" % (i + 1))
-            for stroke in current_vector.strokes:
-                points, closed = stroke.points
+
+            counter = 0
+            strokes = current_vector.strokes
+            for stroke in strokes:
+                counter += 1
+                if fractalize_layers:
+                    points, closed = stroke.points
+                    num_points = len(points) / 6
+                    points = fractalize(points, num_points, len(strokes), closed, counter, subdivisions, smoothness_coefficient, mode)
+                else:
+                    points, closed = stroke.points
+
                 tmp_vector = pdb.gimp_vectors_new(image, "tmp")
                 pdb.gimp_vectors_stroke_new_from_points(tmp_vector, VECTORS_STROKE_TYPE_BEZIER, len(points), points, closed)
                 pdb.gimp_image_add_vectors(image, tmp_vector, pdb.gimp_image_get_vectors_position(image, current_vector))
@@ -402,8 +409,6 @@ register(
          (PF_ADJUSTMENT, "subdivisions", "Subdivisions", 3, (0, 5, 1)),
          (PF_OPTION, "mode", "Method", 0, ("Uniform", "Gaussian")),
          (PF_SLIDER, "smoothness_coefficient", "Smoothness", 2, (0, 20, 0.1)),
-         (PF_TOGGLE, "interpolation", "Interpolate First", False),
-         (PF_SLIDER, "pixel_spacing", "Interpolate Pixel Spacing", 50, (5, 100, 1)),
      ],
      [],
      drawMountain,
