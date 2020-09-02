@@ -1,7 +1,7 @@
 """
 AUTHOR: Kyle J Brekke
 LAST UPDATED: 26 August 2020
-VERSION: 0.1.1
+VERSION: 0.2.0
 DESCRIPTION: The purpose of this plugin is to provide a seamless method of quickly drafting height-map mountain ranges
 using bezier paths in GIMP. The fractalization code is a translation of Rob Antonishen's fractalize_path script, which
 was originally written in tinyScheme.
@@ -38,7 +38,7 @@ def subdivide(point1, point2, smoothness_coefficient, mode):
     :param point1: tuple or list containing x-y coordinates in the form [x, y]; the origin vertex
     :param point2: tuple or list containing x-y coordinates in the form [x, y]; the destination vertex
     :param smoothness_coefficient: float value indicating the degree to which the fractalization will be smoothed;
-                                   higher values will result in a smoother, less jagged fractal
+           higher values will result in a smoother, less jagged fractal
     :param mode: either 0 or 1; indicates whether random noise will be generated as a gaussian (1) or uniform (0) distribution.
     :return: list of new coordinates in the form [x, y] for a new intermediary vertex between point1 and point2
     """
@@ -219,8 +219,8 @@ def fractalizePath(image, path, subdivisions, mode, smoothness_coefficient, inte
     :param subdivisions: integer value indicating the total number of subdivisions to be performed on the path
     :param mode: integer (0 or 1) indicating to fractalize using either a uniform (0) or gaussian (1) distribution
     :param smoothness_coefficient: the value used to determine the smoothing applied during fractalization; higher
-                                   values will reduce the risk of vertices overlapping, but also reduce the overall
-                                   fractalization of the path.
+           values will reduce the risk of vertices overlapping, but also reduce the overall
+           fractalization of the path.
     :param interpolation: boolean indicating whether the path should be interpolated before fractalization
     :param pixel_spacing: integer value used to determine vertex density if interpolation is used
     :param new_path: boolean value indicating whether the resulting path should replace the original path
@@ -268,6 +268,119 @@ def fractalizePath(image, path, subdivisions, mode, smoothness_coefficient, inte
     pdb.gimp_image_undo_group_end(image)
 
 
+def interpolateColor(color1, color2, factor=0.5):
+    """
+    Sub-function calculates the RGB values between two colors two a particular degree between 0 and 1.
+
+    :param color1: GIMP Color object which is be the initial color
+    :param color2: GIMP Color object which is the destination color
+    :param factor: the degree to which the new color should be between the two colors; a lower value will yield a
+           result closer to color1 while a higher value will yield a result more similar to color2; the default value
+           of 0.5 should yield a color which is the exact median of a gradient between color1 and color2
+    :return: a tuple in the form (r, g, b), for which r, g, and b are the calculated shade values
+    """
+    # generate a shade between color1 and color2 to the degree of the factor
+    # calculated without using a loop because python loops are slow
+    return gimpcolor.RGB(int(color1[0] + (factor * (color2[0] - color1[0]))),
+                         int(color1[1] + (factor * (color2[1] - color1[1]))),
+                         int(color1[2] + (factor * (color2[2] - color1[2]))))
+
+
+def calculateGradient(color1, color2, steps):
+    """
+    Sub-function calculates a gradient between two colors which takes place over a defined number of steps, then returns
+    a list of all of the colors in the stepped gradient.
+
+    :param color1: GIMP Color which is the start of the gradient
+    :param color2: GIMP Color which is the end of the gradient
+    :param steps: integer indicating the total number of steps from color1 to color2 in the gradient
+    :return: a list of tuples in the format (r, g, b) indicating the colors in the calculated gradient
+    """
+    factor = 1 / (steps - 1)  # determines the level of difference between each color level
+    colors = []
+    # calculates a color gradient, with a color for each step, where the first value is color1 and the last is color2
+    for i in range(int(steps)):
+        colors.append(interpolateColor(color1, color2, factor * i))
+    return colors
+
+
+def getNewID(original, new):
+    for id in new:
+        if id not in original:
+            return id
+
+
+def drawMountain(image, path, levels,  starting_color, ending_color, fractalize_layers, subdivisions, mode,
+                 smoothness_coefficient, interpolation, pixel_spacing):
+    """
+    Function which takes in a GIMP Vector object to be converted into a topographic mountain. The general premise of this
+    function is that it will take a closed or pseudo-closed path and use it to create several progressively smaller
+    layers which are shaded to indicate differences in height.
+
+    :param image: the GIMP Image object which the path exists in
+    :param path: the GIMP Vertex object to be fractalized
+    :param levels: the total number of layers to be created, considers the first layer to be pre-existing
+    :param starting_color: color of the first layer
+    :param ending_color: color of the ending layer; layers between the first and last levels will be shaded as a gradient
+           between the starting and ending_color
+    :param fractalize_layers: boolean indicating whether layers should be fractalized or not
+    :param subdivisions: integer value indicating the total number of subdivisions to be performed on the path
+    :param mode: integer (0 or 1) indicating to fractalize using either a uniform (0) or gaussian (1) distribution
+    :param smoothness_coefficient: the value used to determine the smoothing applied during fractalization; higher
+           values will reduce the risk of vertices overlapping, but also reduce the overall
+           fractalization of the path.
+    :param interpolation: boolean indicating whether the path should be interpolated before fractalization
+    :param pixel_spacing: integer value used to determine vertex density if interpolation is used
+    """
+    colors = calculateGradient(starting_color, ending_color, levels)
+    pdb.gimp_image_undo_group_start(image)  # do not allow the user to use the undo function while running
+    current_vector = path
+    paths = list(pdb.gimp_path_list(image)[1])
+    to_remove = []
+    if path is not None:
+        for i in range(int(levels)):
+            layer = pdb.gimp_layer_new(image, image.width, image.height, RGBA_IMAGE, "layer %d" % (i + 1), 100, NORMAL_MODE)
+            image.add_layer(layer, 0)
+            new_vector = pdb.gimp_vectors_new(image, "layer %d" % (i + 1))
+            paths.append("layer %d" % (i + 1))
+            for stroke in current_vector.strokes:
+                points, closed = stroke.points
+                tmp_vector = pdb.gimp_vectors_new(image, "tmp")
+                pdb.gimp_vectors_stroke_new_from_points(tmp_vector, VECTORS_STROKE_TYPE_BEZIER, len(points), points, closed)
+                pdb.gimp_image_add_vectors(image, tmp_vector, pdb.gimp_image_get_vectors_position(image, current_vector))
+                pdb.gimp_context_set_foreground(colors[i])
+                pdb.gimp_image_select_item(image, CHANNEL_OP_REPLACE, tmp_vector)
+                pdb.gimp_edit_fill(layer, FOREGROUND_FILL)
+                pdb.gimp_image_remove_vectors(image, tmp_vector)
+
+                if i != levels - 1:
+                    pdb.gimp_selection_shrink(image, 25)
+                    if not pdb.gimp_selection_is_empty(image):
+                        pdb.plug_in_sel2path(image, layer)
+                        pdb.gimp_selection_clear(image)
+                        new_paths = pdb.gimp_path_list(image)[1]
+                        name = getNewID(paths, new_paths)
+                        paths.append(name)
+                        to_remove.append(name)
+                        vec = pdb.gimp_image_get_vectors_by_name(image, name)
+                        for s in vec.strokes:
+                            if s is not None:
+                                points, closed = s.points
+                                pdb.gimp_vectors_stroke_new_from_points(new_vector, VECTORS_STROKE_TYPE_BEZIER, len(points), points, closed)
+
+            if not new_vector.strokes:
+                break
+            elif i != levels - 1:
+                pdb.gimp_image_add_vectors(image, new_vector, pdb.gimp_image_get_vectors_position(image, current_vector))
+                current_vector = new_vector
+
+        for name in to_remove:
+            vec = pdb.gimp_image_get_vectors_by_name(image, name)
+            pdb.gimp_image_remove_vectors(image, vec)
+
+    pdb.gimp_image_undo_group_end(image)
+
+
 # registration for the drawMountain function
 # TODO: re-implement drawMountain to adhere to new design goals
 register(
@@ -282,17 +395,18 @@ register(
      [
          (PF_IMAGE, "image", "Image", 0),
          (PF_VECTORS, "path", "Path", None),
+         (PF_ADJUSTMENT, "levels", "Height Levels", 5, (2, 10, 1)),
+         (PF_COLOR, "starting_color", "Initial Shade", (100, 100, 100)),
+         (PF_COLOR, "ending_color", "Ending Shade", (220, 220, 220)),
+         (PF_TOGGLE, "fractalize_layers", "Fractalize Layers", True),
          (PF_ADJUSTMENT, "subdivisions", "Subdivisions", 3, (0, 5, 1)),
          (PF_OPTION, "mode", "Method", 0, ("Uniform", "Gaussian")),
-         (PF_SLIDER, "smoothness-coefficient", "Smoothness", 2, (0, 20, 0.1)),
+         (PF_SLIDER, "smoothness_coefficient", "Smoothness", 2, (0, 20, 0.1)),
          (PF_TOGGLE, "interpolation", "Interpolate First", False),
          (PF_SLIDER, "pixel_spacing", "Interpolate Pixel Spacing", 50, (5, 100, 1)),
-         (PF_TOGGLE, "new_path", "Create New Path", False),
-         (PF_SLIDER, "branch_probability", "Branch Probability", 0.10, (0, 1, 0.01)),
-         (PF_SLIDER, "branch_length_ratio", "Relative Branch Scale", 0.33, (0, 1, 0.01))
      ],
      [],
-     None,
+     drawMountain,
      menu="<Vectors>"
 )
 
@@ -311,7 +425,7 @@ register(
          (PF_VECTORS, "path", "Path", None),
          (PF_ADJUSTMENT, "subdivisions", "Subdivisions", 3, (0, 5, 1)),
          (PF_OPTION, "mode", "Method", 0, ("Uniform", "Gaussian")),
-         (PF_SLIDER, "smoothness-coefficient", "Smoothness", 2, (0, 20, 0.1)),
+         (PF_SLIDER, "smoothness_coefficient", "Smoothness", 2, (0, 20, 0.1)),
          (PF_TOGGLE, "interpolation", "Interpolate First", False),
          (PF_SLIDER, "pixel_spacing", "Interpolate Pixel Spacing", 50, (5, 100, 1)),
          (PF_TOGGLE, "new_path", "Create New Path", False)
