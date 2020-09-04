@@ -301,14 +301,28 @@ def calculateGradient(color1, color2, steps):
     return colors
 
 
+def calculateShrink(shrink_scale, shrink_type, minimum, iteration):
+    shrink_value = 0
+    if shrink_type == 0:
+        shrink_value = shrink_scale
+    elif shrink_type == 1:
+        shrink_value = shrink_scale / (2 ** iteration)
+    elif shrink_type == 2:
+        shrink_value = shrink_scale * (1 - (0.1 * iteration))
+
+    if shrink_value < minimum:
+        return minimum
+    return shrink_value
+
+
 def getNewID(original, new):
     for id in new:
         if id not in original:
             return id
 
 
-def drawMountain(image, path, levels,  starting_color, ending_color, fractalize_layers, subdivisions, mode,
-                 smoothness_coefficient):
+def drawMountain(image, path, levels, starting_color, ending_color, fractalize_layers, subdivisions, mode,
+                 smoothness_coefficient, layer_shrink, shrink_type, minimum_shrink):
     """
     Function which takes in a GIMP Vector object to be converted into a topographic mountain. The general premise of this
     function is that it will take a closed or pseudo-closed path and use it to create several progressively smaller
@@ -326,8 +340,9 @@ def drawMountain(image, path, levels,  starting_color, ending_color, fractalize_
     :param smoothness_coefficient: the value used to determine the smoothing applied during fractalization; higher
            values will reduce the risk of vertices overlapping, but also reduce the overall
            fractalization of the path.
-    :param interpolation: boolean indicating whether the path should be interpolated before fractalization
-    :param pixel_spacing: integer value used to determine vertex density if interpolation is used
+    :param layer_shrink: integer indicating how many pixels to shrink the first layer by
+    :param shrink_type: name of the function used to reduce the pixel shrink between layers
+    :param minimum_shrink: integer value indicating the lowest the layer shrink is allowed to reach
     """
     colors = calculateGradient(starting_color, ending_color, levels)
     pdb.gimp_image_undo_group_start(image)  # do not allow the user to use the undo function while running
@@ -361,24 +376,27 @@ def drawMountain(image, path, levels,  starting_color, ending_color, fractalize_
                 pdb.gimp_image_remove_vectors(image, tmp_vector)
 
                 if i != levels - 1:
-                    pdb.gimp_selection_shrink(image, 25)
+                    pdb.gimp_selection_shrink(image, calculateShrink(layer_shrink, shrink_type, minimum_shrink, i))
                     if not pdb.gimp_selection_is_empty(image):
                         pdb.plug_in_sel2path(image, layer)
                         pdb.gimp_selection_clear(image)
                         new_paths = pdb.gimp_path_list(image)[1]
                         name = getNewID(paths, new_paths)
-                        paths.append(name)
-                        to_remove.append(name)
-                        vec = pdb.gimp_image_get_vectors_by_name(image, name)
-                        for s in vec.strokes:
-                            if s is not None:
+                        if name is not None:
+                            paths.append(name)
+                            to_remove.append(name)
+                            vec = pdb.gimp_image_get_vectors_by_name(image, name)
+                            for s in vec.strokes:
                                 points, closed = s.points
                                 pdb.gimp_vectors_stroke_new_from_points(new_vector, VECTORS_STROKE_TYPE_BEZIER, len(points), points, closed)
 
             if not new_vector.strokes:
+                pdb.gimp_image_remove_vectors(image, current_vector)
                 break
             elif i != levels - 1:
                 pdb.gimp_image_add_vectors(image, new_vector, pdb.gimp_image_get_vectors_position(image, current_vector))
+                if i > 0:
+                    pdb.gimp_image_remove_vectors(image, current_vector)
                 current_vector = new_vector
 
         for name in to_remove:
@@ -409,6 +427,9 @@ register(
          (PF_ADJUSTMENT, "subdivisions", "Subdivisions", 3, (0, 5, 1)),
          (PF_OPTION, "mode", "Method", 0, ("Uniform", "Gaussian")),
          (PF_SLIDER, "smoothness_coefficient", "Smoothness", 2, (0, 20, 0.1)),
+         (PF_SLIDER, "layer_shrink", "Shrink Magnitude", 25, (10, 100, 1)),
+         (PF_OPTION, "shrink_type", "Shrink Type", 0, ("None", "Exponential", "Constant")),
+         (PF_SLIDER, "minimum_shrink", "Minimum Shrink", 5, (1, 20, 1)),
      ],
      [],
      drawMountain,
